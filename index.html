@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="description" content="Load a CSV of daily prices and inspect basic statistics in the browser." />
+<title>AAPL Data Analyzer</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%230f766e'/%3E%3Cpath d='M15 70 L40 45 L60 55 L85 25' stroke='white' stroke-width='10' fill='none'/%3E%3C/svg%3E" />
+<style>
+  :root {
+    --bg: #f7f6f3;
+    --surface: #ffffff;
+    --surface-2: #f1f0ec;
+    --ink: #1d1c1a;
+    --muted: #77736c;
+    --line: #e7e4de;
+    --accent: #0f766e;
+    --accent-soft: #e5f1ee;
+    --danger: #a83a2b;
+    --danger-soft: #fbecea;
+    --shadow: 0 14px 30px -16px rgba(15, 118, 110, 0.28);
+    --radius: 16px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(900px 480px at 12% -8%, rgba(15, 118, 110, 0.07), transparent 62%),
+      var(--bg);
+    min-height: 100dvh;
+  }
+  .site-head { background: #16211f; color: #fff; padding: 30px 24px; }
+  .head-inner { max-width: 1040px; margin: 0 auto; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .brand-dot { width: 9px; height: 9px; border-radius: 3px; background: #5eead4; flex: none; transform: translateY(-2px); }
+  .site-head h1 { margin: 0; font-size: 30px; line-height: 1.1; letter-spacing: -0.035em; font-weight: 650; }
+  .site-head p { margin: 0; color: #9fb3ae; font-size: 14px; }
+  main { max-width: 1040px; margin: 0 auto; padding: 30px 20px 72px; }
+
+  .drop {
+    position: relative; overflow: hidden;
+    background: var(--surface-2);
+    border: 1px dashed #cfcac1;
+    border-radius: 18px;
+    padding: 40px 24px 38px;
+    text-align: center;
+    transition: background .22s ease, border-color .22s ease, transform .12s ease;
+    cursor: pointer;
+  }
+  .drop:hover { background: #ecebe6; border-color: var(--accent); }
+  .drop:active { transform: scale(.995); }
+  .drop.hover { background: var(--accent-soft); border-color: var(--accent); }
+  .drop .icon {
+    width: 42px; height: 42px; margin: 0 auto 14px;
+    display: grid; place-items: center;
+    border-radius: 12px; background: var(--accent-soft); color: var(--accent);
+  }
+  .drop h2 { margin: 0 0 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+  .drop p { margin: 0; color: var(--muted); font-size: 14px; }
+  .drop .btn {
+    display: inline-block; margin-top: 20px; padding: 10px 20px;
+    background: var(--accent); color: #fff; border-radius: 10px;
+    font-size: 14px; font-weight: 600;
+    box-shadow: 0 6px 14px -8px rgba(15, 118, 110, 0.7);
+    transition: transform .16s ease, background .16s ease;
+  }
+  .drop .btn:hover { background: #0b5f58; transform: translateY(-1px); }
+  .drop:active .btn { transform: translateY(1px); }
+  .drop.loading::after {
+    content: ""; position: absolute; left: 0; bottom: 0; height: 3px; width: 40%;
+    background: var(--accent); animation: slide 1s ease-in-out infinite;
+  }
+  @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
+  input[type=file] { display: none; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+
+  .status {
+    display: flex; align-items: center; gap: 8px;
+    margin: 14px 2px 0; font-size: 13.5px; color: var(--muted); min-height: 22px;
+  }
+  .status .dot { width: 7px; height: 7px; border-radius: 50%; background: #b8b4ac; flex: none; }
+  .status--loading .dot { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+  .status--success { color: var(--accent); }
+  .status--success .dot { background: var(--accent); }
+  .status--error {
+    color: var(--danger); background: var(--danger-soft);
+    padding: 9px 12px; border-radius: 10px; margin-top: 14px;
+  }
+  .status--error .dot { background: var(--danger); }
+  @keyframes pulse { 50% { opacity: .35; transform: scale(.8); } }
+
+  .panel { display: none; margin-top: 30px; }
+  .panel.show { display: block; }
+
+  .stats { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); }
+  .stat {
+    background: var(--surface); border-radius: var(--radius); padding: 18px 20px;
+    box-shadow: var(--shadow);
+    animation: rise .5s cubic-bezier(.2,.7,.2,1) both;
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+  .stat .label { font-size: 12px; color: var(--muted); font-weight: 500; letter-spacing: .02em; }
+  .stat .value {
+    font-size: 24px; font-weight: 650; margin-top: 8px;
+    letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+  }
+  .stat .value.small { font-size: 15px; letter-spacing: 0; line-height: 1.5; }
+
+  .card {
+    background: var(--surface); border-radius: 18px; padding: 22px 24px;
+    box-shadow: var(--shadow); margin-top: 18px;
+    animation: rise .55s cubic-bezier(.2,.7,.2,1) both;
+  }
+  .card h3 { margin: 0 0 14px; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+  canvas { width: 100%; height: 300px; display: block; cursor: crosshair; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  tbody tr { transition: background .15s ease; }
+  tbody tr:hover { background: var(--surface-2); }
+  tbody tr:last-child td { border-bottom: none; }
+  .hint { font-size: 12px; color: var(--muted); margin: 12px 0 0; }
+  code { background: var(--surface); padding: 2px 6px; border-radius: 6px; font-size: 12px; border: 1px solid var(--line); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+<header class="site-head">
+  <div class="head-inner">
+    <span class="brand-dot" aria-hidden="true"></span>
+    <div>
+      <h1>AAPL Data Analyzer</h1>
+      <p>Single-file vanilla web app &middot; load a CSV, see the numbers, view the trend</p>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div id="drop" class="drop" tabindex="0" role="button" aria-label="Choose or drop a CSV file">
+    <div class="icon" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 16V4m0 0L7 9m5-5 5 5" />
+        <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+      </svg>
+    </div>
+    <h2>Drop your CSV here</h2>
+    <p>or click to choose a file (e.g. <code>data/aapl.csv</code>)</p>
+    <span class="btn">Choose CSV</span>
+    <input type="file" id="file" accept=".csv,text/csv" />
+  </div>
+  <div id="status" class="status"></div>
+
+  <section id="panel" class="panel">
+    <div id="stats" class="stats"></div>
+
+    <div class="card">
+      <h3>Close price over time</h3>
+      <canvas id="chart"></canvas>
+      <p class="hint" id="chartHint"></p>
+    </div>
+
+    <div class="card">
+      <h3>First 5 rows</h3>
+      <div class="table-wrap">
+        <table id="preview">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var drop = document.getElementById("drop");
+  var fileInput = document.getElementById("file");
+  var statusEl = document.getElementById("status");
+  var panel = document.getElementById("panel");
+  var statsEl = document.getElementById("stats");
+  var preview = document.getElementById("preview");
+  var canvas = document.getElementById("chart");
+  var chartHint = document.getElementById("chartHint");
+
+  var dataset = null; // { headers, rows, dateCol, closeCol }
+
+  function setStatus(msg, kind) {
+    kind = kind || "info";
+    statusEl.className = "status status--" + kind;
+    statusEl.innerHTML = '<span class="dot"></span><span>' + escapeHTML(msg || "") + "</span>";
+    drop.classList.toggle("loading", kind === "loading");
+  }
+
+  // ---- CSV parsing (handles quoted fields) ----
+  function parseCSV(text) {
+    var rows = [];
+    var row = [];
+    var field = "";
+    var inQuotes = false;
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') { field += '"'; i++; }
+          else inQuotes = false;
+        } else field += ch;
+      } else {
+        if (ch === '"') inQuotes = true;
+        else if (ch === ',') { row.push(field); field = ""; }
+        else if (ch === '\n') { row.push(field); rows.push(row); row = []; field = ""; }
+        else if (ch === '\r') { /* skip */ }
+        else field += ch;
+      }
+    }
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+    return rows.filter(function (r) { return r.some(function (c) { return c.trim() !== ""; }); });
+  }
+
+  function findCol(headers, names) {
+    for (var i = 0; i < headers.length; i++) {
+      var h = headers[i].trim().toLowerCase();
+      if (names.indexOf(h) !== -1) return i;
+    }
+    return -1;
+  }
+
+  function analyze(text, label) {
+    var table = parseCSV(text);
+    if (table.length < 2) throw new Error("CSV needs a header row and at least one data row.");
+    var headers = table[0].map(function (h) { return h.trim(); });
+    var dateCol = findCol(headers, ["date", "datetime", "time"]);
+    var closeCol = findCol(headers, ["close", "adj close", "adjclose", "adjusted close"]);
+    if (dateCol === -1) throw new Error("No 'Date' column found. Columns: " + headers.join(", "));
+    if (closeCol === -1) throw new Error("No 'Close' (or 'Adj Close') column found. Columns: " + headers.join(", "));
+
+    var rows = table.slice(1).filter(function (r) {
+      var v = parseFloat(r[closeCol]);
+      return !isNaN(v) && r[dateCol] && r[dateCol].trim() !== "";
+    }).map(function (r) {
+      return { date: r[dateCol].trim(), close: parseFloat(r[closeCol]) };
+    });
+
+    if (!rows.length) throw new Error("No valid numeric rows under the Close column.");
+    dataset = { headers: headers, rows: rows, dateCol: dateCol, closeCol: closeCol };
+    render();
+    setStatus("Loaded " + rows.length + " data rows" + (label ? " from " + label : "") + ".", "success");
+  }
+
+  function fmt(n) {
+    return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function countUp() {
+    var els = statsEl.querySelectorAll("[data-target]");
+    var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    Array.prototype.forEach.call(els, function (el) {
+      var target = parseFloat(el.getAttribute("data-target"));
+      var kind = el.getAttribute("data-kind");
+      if (reduce) {
+        el.textContent = kind === "int" ? target.toLocaleString() : fmt(target);
+        return;
+      }
+      var start = performance.now(), dur = 700;
+      function step(now) {
+        var p = Math.min(1, (now - start) / dur);
+        var eased = 1 - Math.pow(1 - p, 3);
+        var v = target * eased;
+        el.textContent = kind === "int" ? Math.round(v).toLocaleString() : fmt(v);
+        if (p < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
+  function render() {
+    var rows = dataset.rows;
+    var closes = rows.map(function (r) { return r.close; });
+    var sum = closes.reduce(function (a, b) { return a + b; }, 0);
+    var mean = sum / closes.length;
+    var min = Math.min.apply(null, closes);
+    var max = Math.max.apply(null, closes);
+    var minDate = rows[0].date;
+    var maxDate = rows[rows.length - 1].date;
+
+    var cards = [
+      ["Rows", rows.length, "", "int"],
+      ["Date range", minDate + " → " + maxDate, "small", "text"],
+      ["Mean Close", mean, "", "float"],
+      ["Min Close", min, "", "float"],
+      ["Max Close", max, "", "float"]
+    ];
+    statsEl.innerHTML = cards.map(function (c, i) {
+      var isText = c[3] === "text";
+      return '<div class="stat" style="animation-delay:' + (i * 55) + 'ms">' +
+             '<div class="label">' + c[0] + '</div>' +
+             '<div class="value ' + c[2] + '"' +
+             (isText ? "" : ' data-target="' + c[1] + '" data-kind="' + c[3] + '"') + '>' +
+             (isText ? escapeHTML(c[1]) : "0") + '</div></div>';
+    }).join("");
+    countUp();
+
+    var head = dataset.headers;
+    preview.querySelector("thead").innerHTML = "<tr>" + head.map(function (h) {
+      return "<th>" + escapeHTML(h) + "</th>";
+    }).join("") + "</tr>";
+    preview.querySelector("tbody").innerHTML = rows.slice(0, 5).map(function (r) {
+      return "<tr>" + head.map(function (h, i) {
+        var val = (i === dataset.dateCol) ? r.date : (i === dataset.closeCol ? r.close : "");
+        return "<td>" + escapeHTML(String(val)) + "</td>";
+      }).join("") + "</tr>";
+    }).join("");
+
+    hoverIndex = -1;
+    animateChart(rows);
+    panel.classList.add("show");
+  }
+
+  function escapeHTML(s) {
+    return s.replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  var hoverIndex = -1;
+  var geom = null;
+  var animating = false;
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  function drawChart(rows, reveal) {
+    reveal = (typeof reveal === "number") ? reveal : 1;
+    var dpr = window.devicePixelRatio || 1;
+    var w = canvas.clientWidth, h = canvas.clientHeight;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    var ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    if (!rows.length || w === 0) return;
+
+    var pad = { l: 58, r: 18, t: 18, b: 36 };
+    var cw = w - pad.l - pad.r, ch = h - pad.t - pad.b;
+    var vals = rows.map(function (r) { return r.close; });
+    var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+    var span = (max - min) || 1;
+    var lo = min - span * 0.08, hi = max + span * 0.08;
+    var range = hi - lo;
+    var X = function (i) { return pad.l + (rows.length === 1 ? cw / 2 : (i / (rows.length - 1)) * cw); };
+    var Y = function (v) { return pad.t + (1 - (v - lo) / range) * ch; };
+    geom = { pad: pad, cw: cw, rows: rows };
+
+    ctx.strokeStyle = "#ece9e3"; ctx.fillStyle = "#8e8a82";
+    ctx.font = "11px 'Avenir Next','Segoe UI',sans-serif"; ctx.textAlign = "right";
+    for (var g = 0; g <= 4; g++) {
+      var y = pad.t + (g / 4) * ch;
+      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+      ctx.fillText(fmt(hi - (g / 4) * range), pad.l - 9, y + 4);
+    }
+
+    var last = Math.max(1, Math.ceil(reveal * rows.length));
+    var pts = rows.slice(0, last).map(function (r, i) { return [X(i), Y(r.close)]; });
+
+    if (pts.length > 1) {
+      var grad = ctx.createLinearGradient(0, pad.t, 0, pad.t + ch);
+      grad.addColorStop(0, "rgba(15,118,110,.18)");
+      grad.addColorStop(1, "rgba(15,118,110,0)");
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pad.t + ch);
+      pts.forEach(function (p) { ctx.lineTo(p[0], p[1]); });
+      ctx.lineTo(pts[pts.length - 1][0], pad.t + ch);
+      ctx.closePath(); ctx.fillStyle = grad; ctx.fill();
+    }
+
+    ctx.beginPath();
+    pts.forEach(function (p, i) { if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]); });
+    ctx.strokeStyle = "#0f766e"; ctx.lineWidth = 2.2; ctx.lineJoin = "round"; ctx.stroke();
+
+    ctx.fillStyle = "#8e8a82";
+    ctx.textAlign = "left"; ctx.fillText(rows[0].date, pad.l, h - 12);
+    ctx.textAlign = "right"; ctx.fillText(rows[rows.length - 1].date, w - pad.r, h - 12);
+
+    if (reveal === 1 && hoverIndex >= 0 && hoverIndex < rows.length) {
+      var hx = X(hoverIndex), hy = Y(rows[hoverIndex].close);
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = "#0f766e"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(hx, pad.t); ctx.lineTo(hx, pad.t + ch); ctx.stroke(); ctx.setLineDash([]);
+      ctx.beginPath(); ctx.arc(hx, hy, 4, 0, Math.PI * 2); ctx.fillStyle = "#0f766e"; ctx.fill();
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
+
+      var label = rows[hoverIndex].date + "  " + fmt(rows[hoverIndex].close);
+      ctx.font = "12px 'Avenir Next','Segoe UI',sans-serif";
+      var tw = ctx.measureText(label).width + 20;
+      var tx = Math.min(Math.max(hx - tw / 2, pad.l), w - pad.r - tw);
+      var ty = Math.max(pad.t + 4, hy - 40);
+      roundRect(ctx, tx, ty, tw, 26, 7);
+      ctx.fillStyle = "#16211f"; ctx.fill();
+      ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.fillText(label, tx + tw / 2, ty + 17);
+    }
+
+    chartHint.textContent = "Showing " + rows.length + " points. Close min " + fmt(min) + ", max " + fmt(max) + ".";
+  }
+
+  function animateChart(rows) {
+    var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) { drawChart(rows, 1); return; }
+    animating = true;
+    var start = performance.now(), dur = 700;
+    function step(now) {
+      var p = Math.min(1, (now - start) / dur);
+      drawChart(rows, p);
+      if (p < 1) requestAnimationFrame(step); else animating = false;
+    }
+    requestAnimationFrame(step);
+  }
+
+  function loadFile(file) {
+    if (!file) return;
+    setStatus("Reading " + file.name + " …", "loading");
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      try { analyze(e.target.result, file.name); }
+      catch (err) {
+        setStatus("Could not load this CSV: " + err.message, "error");
+        panel.classList.remove("show");
+      }
+    };
+    reader.onerror = function () { setStatus("Could not read the file.", "error"); };
+    reader.readAsText(file);
+  }
+
+  function loadSample() {
+    fetch("data/aapl.csv")
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+      .then(function (t) { analyze(t, "data/aapl.csv"); })
+      .catch(function () {
+        setStatus("Could not auto-load data/aapl.csv. Choose the file manually above.", "error");
+      });
+  }
+
+  // ---- events ----
+  drop.addEventListener("click", function () { fileInput.click(); });
+  drop.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); } });
+  fileInput.addEventListener("change", function (e) { loadFile(e.target.files[0]); });
+  ["dragenter", "dragover"].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("hover"); });
+  });
+  ["dragleave", "drop"].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove("hover"); });
+  });
+  drop.addEventListener("drop", function (e) {
+    var f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) loadFile(f);
+  });
+  window.addEventListener("resize", function () { if (dataset) drawChart(dataset.rows, 1); });
+  canvas.addEventListener("mousemove", function (e) {
+    if (!dataset || animating || !geom) return;
+    var rect = canvas.getBoundingClientRect();
+    var x = e.clientX - rect.left;
+    var i = Math.round(((x - geom.pad.l) / geom.cw) * (geom.rows.length - 1));
+    i = Math.max(0, Math.min(geom.rows.length - 1, i));
+    if (i !== hoverIndex) { hoverIndex = i; drawChart(geom.rows, 1); }
+  });
+  canvas.addEventListener("mouseleave", function () {
+    if (!dataset || animating || !geom) return;
+    hoverIndex = -1;
+    drawChart(geom.rows, 1);
+  });
+
+  // Try to auto-load the sample when served over http; harmless if blocked.
+  if (window.location.protocol !== "file:") loadSample();
+})();
+</script>
+</body>
+</html>
